@@ -123,7 +123,11 @@ function ExportNoteWindow({ notePath }: { notePath: string }): JSX.Element {
           window.zen.getCurrentVault(),
           window.zen.listNotes(),
           window.zen.listAssets(),
-          window.zen.readNote(notePath)
+          window.zen.readNote(notePath),
+          // Primes the bridge's server-capability cache: renderTikz consults
+          // it, and without this fetch the export window claimed "TikZ
+          // rendering is not available in the web build" on capable servers.
+          window.zen.getServerCapabilities()
         ])
         if (cancelled) return
         if (!vault) {
