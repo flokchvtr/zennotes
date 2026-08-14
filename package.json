@@ -49,6 +49,7 @@
     "perf:editor-scroll": "node tooling/scripts/perf-editor-scroll.mjs"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
     "patch-package": "8.0.1",
     "turbo": "^2.5.8",
     "vite": "^6.4.3"

@@ -35,6 +35,9 @@ type Config struct {
 	AuthToken           string   `json:"authToken"`
 	AuthTokenSource     string   `json:"-"`
 	AllowUnscopedBrowse bool     `json:"-"`
+	// TikzUpstream is the base URL of a local TikZ render process
+	// (ZENNOTES_TIKZ_UPSTREAM); empty disables the /tikz proxy.
+	TikzUpstream string `json:"-"`
 	AllowInsecureNoAuth bool     `json:"-"`
 	DevMode             bool     `json:"-"`
 	// DisableWatcher turns off the inotify file watcher (ZENNOTES_DISABLE_WATCHER).
@@ -128,6 +131,7 @@ func Load() Config {
 			cfg.AuthTokenSource = AuthTokenSourceFile
 		}
 	}
+	cfg.TikzUpstream = os.Getenv("ZENNOTES_TIKZ_UPSTREAM")
 	cfg.AllowUnscopedBrowse = envEnabled("ZENNOTES_ALLOW_UNSCOPED_BROWSE")
 	cfg.AllowInsecureNoAuth = envEnabled("ZENNOTES_ALLOW_INSECURE_NOAUTH")
 	cfg.DevMode = envEnabled("ZENNOTES_DEV")

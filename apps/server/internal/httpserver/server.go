@@ -232,6 +232,8 @@ func (s *Server) registerProtectedRoutes(r chi.Router) {
 	r.Get("/tasks", s.allTasks)
 	r.Get("/tasks/for", s.tasksFor)
 
+	r.Post("/tikz", s.tikzRender)
+
 	r.Post("/demo/generate", s.demoGenerate)
 	r.Post("/demo/remove", s.demoRemove)
 
@@ -432,6 +434,9 @@ func (s *Server) capabilities(w http.ResponseWriter, _ *http.Request) {
 		// Absent from every server before 2.20.2, which is exactly what makes
 		// it usable as a signal.
 		"reportsMissingAsNotFound": true,
+		// TikZ rendering proxied to a local render process (/tikz route). Only
+		// advertised when the operator configured ZENNOTES_TIKZ_UPSTREAM.
+		"supportsTikz": strings.TrimSpace(cfg.TikzUpstream) != "",
 	})
 }
 

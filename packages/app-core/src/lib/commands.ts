@@ -416,12 +416,12 @@ export function buildCommands(options?: { includeUnavailable?: boolean }): Comma
       title: 'Export Note as Word Document…',
       category: 'Note',
       keywords: 'save word docx doc export office editable',
-      // Desktop-only: the serializer embeds local images from the main
-      // process, which the web app has no access to.
+      // The serializer runs wherever `docx` runs (Node main process or the
+      // browser); remote workspaces are still out since images resolve from
+      // the local vault.
       when: () =>
         !!getState().activeNote &&
         getState().workspaceMode !== 'remote' &&
-        window.zen.getAppInfo().runtime === 'desktop' &&
         typeof window.zen.exportNoteDocx === 'function',
       run: async () => {
         await getState().exportActiveNoteDocx()

@@ -1,0 +1,6 @@
+{
+  "name": "zennotes-tikz-runtime",
+  "private": true,
+  "type": "module",
+  "dependencies": { "node-tikzjax": "^1.0.5" }
+}

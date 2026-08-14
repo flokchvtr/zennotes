@@ -794,6 +794,9 @@ export interface ServerCapabilities {
    *  before 2.46, which keeps Settings, Templates read-only on the web client
    *  and on a desktop connected to that server (#723). */
   supportsCustomTemplates?: boolean
+  /** TikZ rendering via `POST /tikz`, proxied to a local render process.
+   *  Only advertised when the operator configured one. */
+  supportsTikz?: boolean
 }
 
 export interface ServerSessionStatus {

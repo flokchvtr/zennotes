@@ -49,9 +49,9 @@ import {
   WidthType,
   convertInchesToTwip
 } from 'docx'
-import { withExportTitle } from '@shared/export-title'
-import { stripBlockAnchorMarkers } from '@shared/block-anchors'
-import { rewriteWikilinkImageEmbeds, splitEmbedLabel, type EmbedSize } from '@shared/embed-size'
+import { withExportTitle } from './export-title'
+import { stripBlockAnchorMarkers } from './block-anchors'
+import { rewriteWikilinkImageEmbeds, splitEmbedLabel, type EmbedSize } from './embed-size'
 
 /* -------------------------------------------------------------------------- */
 /*  The intermediate representation                                           */
@@ -278,7 +278,7 @@ export function noteMarkdownToIR(markdown: string): IRBlock[] {
 
 /** A resolved local image, ready for embedding. */
 export interface ResolvedImage {
-  data: Buffer
+  data: Uint8Array
   /** Pixel dimensions at 96dpi, already scaled to fit the page column. */
   width: number
   height: number
@@ -508,6 +508,18 @@ export async function renderNoteDocx(
   noteTitle: string,
   resolveImage: ImageResolver
 ): Promise<Buffer> {
+  return await Packer.toBuffer(await buildNoteDocxDocument(markdown, noteTitle, resolveImage))
+}
+
+/**
+ * Build the docx Document without packing it, so each runtime can pick its
+ * own packer: `Packer.toBuffer` in Node, `Packer.toBlob` in the browser.
+ */
+export async function buildNoteDocxDocument(
+  markdown: string,
+  noteTitle: string,
+  resolveImage: ImageResolver
+): Promise<Document> {
   const titled = withExportTitle(markdown, noteTitle)
   const blocks = noteMarkdownToIR(titled.markdown)
   const children: (Paragraph | Table)[] = []
@@ -555,5 +567,5 @@ export async function renderNoteDocx(
     },
     sections: [{ children }]
   })
-  return await Packer.toBuffer(doc)
+  return doc
 }
