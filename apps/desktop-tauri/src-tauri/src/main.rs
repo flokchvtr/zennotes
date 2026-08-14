@@ -144,9 +144,51 @@ fn main() {
 
     tauri::Builder::default()
         .setup(move |app| {
+            let origin = format!("http://{bind}");
+            let handle = app.handle().clone();
+            let popup_seq = std::sync::atomic::AtomicU32::new(0);
             tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::External(url.clone()))
                 .title("ZenNotes")
                 .inner_size(1280.0, 840.0)
+                // window.open: same-origin popups (the PDF export window)
+                // become real Tauri windows; anything else goes to the system
+                // browser. WKWebView has no window.print, so the popup gets a
+                // shim that signals through the title and Rust runs the
+                // native print operation ("Save as PDF" lives in its dialog).
+                .on_new_window(move |popup_url, features| {
+                    if !popup_url.as_str().starts_with(&origin) {
+                        let _ = Command::new("open").arg(popup_url.as_str()).spawn();
+                        return tauri::webview::NewWindowResponse::Deny;
+                    }
+                    let label = format!(
+                        "popup-{}",
+                        popup_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    );
+                    let built = tauri::WebviewWindowBuilder::new(
+                        &handle,
+                        label,
+                        tauri::WebviewUrl::External(popup_url),
+                    )
+                    .window_features(features)
+                    .initialization_script(
+                        "window.print = () => { document.title = '__zn_print__' };",
+                    )
+                    .on_document_title_changed(|window, title| {
+                        if title == "__zn_print__" {
+                            let _ = window.print();
+                        }
+                    })
+                    .title("ZenNotes — Export")
+                    .inner_size(900.0, 800.0)
+                    .build();
+                    match built {
+                        Ok(window) => tauri::webview::NewWindowResponse::Create { window },
+                        Err(err) => {
+                            eprintln!("popup window failed: {err}");
+                            tauri::webview::NewWindowResponse::Deny
+                        }
+                    }
+                })
                 .build()?;
             Ok(())
         })
