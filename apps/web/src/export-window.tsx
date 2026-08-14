@@ -226,6 +226,12 @@ function ExportNoteWindow({ notePath }: { notePath: string }): JSX.Element {
         .export-note-shell .prose-zen {
           padding: 32px 40px 48px;
         }
+        /* The export exists only to be printed: diagram chrome (zoom
+           controls + Expand) is interactive noise that would end up in the
+           PDF, for TikZ, Mermaid, JSXGraph, and function-plot alike. */
+        .export-note-shell .zen-diagram-toolbar {
+          display: none !important;
+        }
         @media print {
           html,
           body,
