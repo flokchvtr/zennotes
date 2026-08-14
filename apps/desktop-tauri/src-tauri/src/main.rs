@@ -188,16 +188,27 @@ fn spawn_export_popup(
     let dest = pdf_destination(&popup_url);
     let mut builder =
         tauri::WebviewWindowBuilder::new(handle, label, tauri::WebviewUrl::External(popup_url))
-            .visible(!is_export)
-            // Two shims: window.print does not exist in WKWebView (signal
-            // through the title instead), and requestAnimationFrame never
-            // fires in a hidden window — the export page waits on it before
-            // printing, so route it through setTimeout.
+            .visible(!is_export || std::env::var_os("ZENNOTES_EXPORT_DEBUG").is_some())
+            // Shims: window.print does not exist in WKWebView (signal through
+            // the title instead), requestAnimationFrame never fires in a
+            // hidden window (the export page waits on it before printing), and
+            // page errors are surfaced through the same title channel since a
+            // headless webview has no readable console.
             .initialization_script(
                 "window.print = () => { document.title = '__zn_print__' };\n\
-                 window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);",
+                 window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);\n\
+                 window.addEventListener('error', (e) => { document.title = '__zn_err__ ' + (e.message || 'unknown'); });\n\
+                 window.addEventListener('unhandledrejection', (e) => { document.title = '__zn_err__ ' + (e.reason && e.reason.message || e.reason || 'rejection'); });\n\
+                 setTimeout(() => { if (document.title === 'ZenNotes') { document.title = '__zn_err__ stuck ' + document.readyState + ': ' + (document.body ? document.body.innerText.replace(/\\s+/g, ' ').slice(0, 160) : 'no body'); } }, 8000);",
             )
             .on_document_title_changed(move |window, title| {
+                if title.starts_with("__zn_err__") {
+                    eprintln!("[popup] page error: {}", &title["__zn_err__".len()..]);
+                    return;
+                }
+                if std::env::var_os("ZENNOTES_EXPORT_DEBUG").is_some() {
+                    eprintln!("[popup] title: {title:?}");
+                }
                 if title != "__zn_print__" {
                     return;
                 }
