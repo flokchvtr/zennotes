@@ -60,6 +60,25 @@ fn free_port() -> u16 {
         .port()
 }
 
+/// The webview's localStorage (onboarding done, theme, vim prefs…) is scoped
+/// to the origin, port included — so the UI port must be STABLE across
+/// launches or every start looks like a first run. Fixed port with a few
+/// sequential fallbacks; a fallback launch works but sees fresh prefs.
+fn stable_ui_port() -> u16 {
+    if let Some(p) = std::env::var("ZENNOTES_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+    {
+        return p;
+    }
+    for port in 39420..39430 {
+        if TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return port;
+        }
+    }
+    free_port()
+}
+
 fn vault_path() -> PathBuf {
     std::env::var_os("ZENNOTES_VAULT_PATH")
         .map(PathBuf::from)
@@ -72,7 +91,7 @@ fn vault_path() -> PathBuf {
 }
 
 fn main() {
-    let port = free_port();
+    let port = stable_ui_port();
     let bind = format!("127.0.0.1:{port}");
 
     let vault = vault_path();
