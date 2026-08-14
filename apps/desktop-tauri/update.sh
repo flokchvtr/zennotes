@@ -55,4 +55,8 @@ echo "==> Installing to $APP_DEST"
 rm -rf "$APP_DEST"
 cp -R "$TAURI/src-tauri/target/release/bundle/macos/ZenNotes.app" "$APP_DEST"
 
+if [ -w /opt/homebrew/bin ]; then
+  ln -sf "$TAURI/bin/zn" /opt/homebrew/bin/zn
+fi
+
 echo "==> Done: $(git log -1 --format='%h %s')"

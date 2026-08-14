@@ -1,0 +1,18 @@
+#!/bin/sh
+# ZenNotes CLI for the Tauri build: runs the pure-Node cli.js bundle.
+# Unlike the Electron install there is no app-managed config, so the current
+# vault comes from the Go server's persisted host config — the same file the
+# Tauri app's vault switcher writes. An explicit ZENNOTES_VAULT still wins.
+set -eu
+
+RUNTIME="$(cd "$(dirname "$(readlink "$0" || echo "$0")")/../mcp-runtime" && pwd)"
+
+if [ -z "${ZENNOTES_VAULT:-}" ] && [ -f "$HOME/.zennotes/server.json" ]; then
+  VAULT=$(node -e 'try{process.stdout.write(JSON.parse(require("fs").readFileSync(process.env.HOME+"/.zennotes/server.json","utf8")).vaultPath||"")}catch{}')
+  if [ -n "$VAULT" ]; then
+    ZENNOTES_VAULT="$VAULT"
+    export ZENNOTES_VAULT
+  fi
+fi
+
+exec node "$RUNTIME/cli.js" "$@"
