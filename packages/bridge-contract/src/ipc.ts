@@ -742,6 +742,10 @@ export interface ServerCapabilities {
    *  (delete/duplicate/restore/purge). Absent on servers before 2.24, which
    *  is what turns a bare 404 into a "server needs an update" message. */
   supportsAssetOps?: boolean
+  /** Custom-template CRUD under `.zennotes/templates/` (the `/templates`
+   *  routes). Absent on older servers, which keeps the settings section
+   *  hidden for them. */
+  supportsCustomTemplates?: boolean
 }
 
 export interface ServerSessionStatus {

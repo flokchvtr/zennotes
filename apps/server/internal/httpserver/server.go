@@ -221,6 +221,11 @@ func (s *Server) registerProtectedRoutes(r chi.Router) {
 	r.Post("/folders/delete", s.deleteFolder)
 	r.Post("/folders/duplicate", s.duplicateFolder)
 
+	r.Get("/templates", s.listTemplates)
+	r.Get("/templates/read", s.readTemplate)
+	r.Post("/templates/write", s.writeTemplate)
+	r.Post("/templates/delete", s.deleteTemplate)
+
 	r.Get("/search/capabilities", s.searchCapabilities)
 	r.Get("/search/text", s.searchText)
 
@@ -402,6 +407,9 @@ func (s *Server) capabilities(w http.ResponseWriter, _ *http.Request) {
 		// Absent from every server before 2.20.2, which is exactly what makes
 		// it usable as a signal.
 		"reportsMissingAsNotFound": true,
+		// Custom-template CRUD under .zennotes/templates/ (/templates routes).
+		// Absent from older servers; web clients gate the settings section on it.
+		"supportsCustomTemplates": true,
 	})
 }
 

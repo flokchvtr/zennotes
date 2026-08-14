@@ -260,6 +260,10 @@ function getServerCapabilities(): Promise<ServerCapabilities | null> {
   return jsonRequest<ServerCapabilities>('/capabilities')
     .then((caps) => {
       lastServerCapabilities = caps
+      // getCapabilities() is synchronous by contract, so the server-backed
+      // template capability is folded into the static object once known.
+      // Callers (SettingsModal) read it at open time, well after boot.
+      WEB_CAPABILITIES.supportsCustomTemplates = caps.supportsCustomTemplates === true
       return caps
     })
     .catch((err) => {
@@ -848,23 +852,39 @@ function deleteWorkflowRuns(_workflowId: string): Promise<number> {
   return Promise.resolve(0)
 }
 
-// Custom templates require local-filesystem CRUD, which the web app does not
-// have (supportsCustomTemplates is false). Built-in templates still work since
-// they are renderer constants. List is empty; mutations are rejected.
+// Custom templates live in the vault (`.zennotes/templates/`), served by the
+// `/templates` routes on servers that advertise supportsCustomTemplates.
+// Older servers keep the empty-list behavior so the UI stays hidden.
 function listTemplates(): Promise<CustomTemplateFile[]> {
-  return Promise.resolve([])
+  if (lastServerCapabilities?.supportsCustomTemplates !== true) {
+    return Promise.resolve([])
+  }
+  return jsonRequest<CustomTemplateFile[]>('/templates')
 }
 
-function readTemplate(_sourcePath: string): Promise<string> {
-  return Promise.reject(new Error('Custom templates are unavailable on the web'))
+async function readTemplate(sourcePath: string): Promise<string> {
+  const res = await jsonRequest<{ raw: string }>(
+    `/templates/read?path=${encodeURIComponent(sourcePath)}`
+  )
+  return res.raw
 }
 
-function writeTemplate(_input: WriteTemplateInput): Promise<CustomTemplateFile> {
-  return Promise.reject(new Error('Custom templates are unavailable on the web'))
+function writeTemplate(input: WriteTemplateInput): Promise<CustomTemplateFile> {
+  return jsonRequest<CustomTemplateFile>('/templates/write', {
+    method: 'POST',
+    body: {
+      slug: input.slug,
+      raw: input.raw,
+      previousSourcePath: input.previousSourcePath ?? ''
+    }
+  })
 }
 
-function deleteTemplate(_sourcePath: string): Promise<void> {
-  return Promise.reject(new Error('Custom templates are unavailable on the web'))
+async function deleteTemplate(sourcePath: string): Promise<void> {
+  await jsonRequest<{ ok: boolean }>('/templates/delete', {
+    method: 'POST',
+    body: { sourcePath }
+  })
 }
 
 // --------------------------------------------------------------------
