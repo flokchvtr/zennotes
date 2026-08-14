@@ -169,7 +169,7 @@ import {
   listWorkflowRuns,
   undoWorkflowRun,
 } from "./workflow-apply";
-import { renderNoteDocx } from "./note-docx";
+import { renderNoteDocx } from "@shared/note-docx";
 import type {
   ApplyWorkflowInput,
   ExportWorkflowInput,

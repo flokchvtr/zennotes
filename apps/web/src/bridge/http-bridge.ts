@@ -69,6 +69,8 @@ import type {
 } from '@shared/ipc'
 import type { VaultTask } from '@shared/tasks'
 import { createDatabaseOps, type DatabaseVaultLayout } from '@shared/database-ops'
+import { buildNoteDocxDocument, type ResolvedImage } from '@shared/note-docx'
+import { Packer } from 'docx'
 import { isUnknownRouteResponse, parseServerErrorBody } from '@shared/server-error-shape'
 import { pastedImageFilename } from '@shared/pasted-image'
 import { createAbsenceAwareReader } from '@shared/remote-absence'
@@ -523,10 +525,81 @@ function duplicateNote(relPath: string): Promise<NoteMeta> {
   })
 }
 
-// Word export renders in the desktop main process (it reads local image files
-// for embedding); the web app has neither, so the honest answer is a message.
-function exportNoteDocx(_relPath: string): Promise<string | null> {
-  return Promise.reject(new Error('Word export is available in the desktop app.'))
+// Word export runs entirely in the browser: the shared serializer builds the
+// document and images resolve over the same `/assets/raw` route the preview
+// uses. Mirrors the desktop resolver: relative-to-note or root-relative
+// paths only, unsupported formats re-encoded to PNG, downscale-only fit to
+// the printable Letter column (624px at 96dpi).
+async function exportNoteDocx(relPath: string): Promise<string | null> {
+  const note = await jsonRequest<NoteContent>(
+    `/notes/read?path=${encodeURIComponent(relPath)}`
+  )
+
+  const resolveImage = async (src: string): Promise<ResolvedImage | null> => {
+    const url = resolveLocalAssetUrl('', relPath, src)
+    if (!url) return null
+    let blob: Blob
+    try {
+      const response = await fetch(url)
+      if (!response.ok) return null
+      blob = await response.blob()
+    } catch {
+      return null
+    }
+    let bitmap: ImageBitmap
+    try {
+      bitmap = await createImageBitmap(blob)
+    } catch {
+      return null
+    }
+    if (bitmap.width === 0 || bitmap.height === 0) return null
+
+    const cleanSrc = src.split(/[?#]/)[0].toLowerCase()
+    const ext = cleanSrc.slice(cleanSrc.lastIndexOf('.'))
+    let type: ResolvedImage['type']
+    let data: Uint8Array
+    if (ext === '.png') type = 'png'
+    else if (ext === '.jpg' || ext === '.jpeg') type = 'jpg'
+    else if (ext === '.gif') type = 'gif'
+    else if (ext === '.bmp') type = 'bmp'
+    else {
+      // Word will not take this format directly; re-encode to PNG.
+      const canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+      canvas.getContext('2d')?.drawImage(bitmap, 0, 0)
+      const png = await canvas.convertToBlob({ type: 'image/png' })
+      data = new Uint8Array(await png.arrayBuffer())
+      type = 'png'
+      const maxWidth = 624
+      const scale = bitmap.width > maxWidth ? maxWidth / bitmap.width : 1
+      return {
+        data,
+        width: Math.round(bitmap.width * scale),
+        height: Math.round(bitmap.height * scale),
+        type
+      }
+    }
+    data = new Uint8Array(await blob.arrayBuffer())
+    const maxWidth = 624
+    const scale = bitmap.width > maxWidth ? maxWidth / bitmap.width : 1
+    return {
+      data,
+      width: Math.round(bitmap.width * scale),
+      height: Math.round(bitmap.height * scale),
+      type
+    }
+  }
+
+  const doc = await buildNoteDocxDocument(note.body, note.title, resolveImage)
+  const docxBlob = await Packer.toBlob(doc)
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(docxBlob)
+  link.download = `${note.title}.docx`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(link.href), 10_000)
+  // Like a cancelled desktop save dialog: no path to reveal on the web.
+  return null
 }
 
 async function exportNotePdf(_relPath: string): Promise<string | null> {
