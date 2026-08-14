@@ -90,6 +90,143 @@ fn vault_path() -> PathBuf {
         })
 }
 
+/// Destination for a PDF export: ~/Downloads/<note title>.pdf, numbered
+/// instead of overwriting. The exportNote query param is the vault-relative
+/// note path, already percent-decoded by the Url parser.
+fn pdf_destination(url: &tauri::Url) -> PathBuf {
+    let note = url
+        .query_pairs()
+        .find(|(k, _)| k == "exportNote")
+        .map(|(_, v)| v.into_owned())
+        .unwrap_or_else(|| "note".into());
+    let stem = note
+        .rsplit('/')
+        .next()
+        .unwrap_or(&note)
+        .trim_end_matches(".md");
+    #[allow(deprecated)]
+    let downloads = std::env::home_dir()
+        .expect("no home directory")
+        .join("Downloads");
+    let mut dest = downloads.join(format!("{stem}.pdf"));
+    let mut n = 2;
+    while dest.exists() {
+        dest = downloads.join(format!("{stem} ({n}).pdf"));
+        n += 1;
+    }
+    dest
+}
+
+/// Paginated PDF straight to disk — the WKWebView equivalent of Electron's
+/// printToPDF: a print operation with the panel disabled and the job
+/// disposition set to "save to this URL". Must run on the main thread, and
+/// MUST use the modal runner: Apple documents the synchronous runOperation
+/// as unsupported for WKWebView (it produced a runaway million-page PDF).
+/// The modal variant returns immediately; completion is the file appearing.
+#[cfg(target_os = "macos")]
+fn silent_print_to_pdf(wk: &objc2_web_kit::WKWebView, dest: &std::path::Path) -> bool {
+    use objc2::runtime::ProtocolObject;
+    use objc2_app_kit::{NSPrintInfo, NSPrintJobSavingURL, NSPrintSaveJob};
+    use objc2_foundation::{NSString, NSURL};
+    unsafe {
+        let Some(window) = wk.window() else {
+            return false;
+        };
+        // Mutating the shared print info is what wry's own print() does; we
+        // never run another print job that would care about the leftovers.
+        let info = NSPrintInfo::sharedPrintInfo();
+        info.setJobDisposition(NSPrintSaveJob);
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&dest.to_string_lossy()));
+        info.dictionary()
+            .setObject_forKey(&url, ProtocolObject::from_ref(NSPrintJobSavingURL));
+        let op = wk.printOperationWithPrintInfo(&info);
+        op.setShowsPrintPanel(false);
+        op.setShowsProgressPanel(false);
+        op.setCanSpawnSeparateThread(true);
+        op.runOperationModalForWindow_delegate_didRunSelector_contextInfo(
+            &window,
+            None,
+            None,
+            std::ptr::null_mut(),
+        );
+        true
+    }
+}
+
+/// Wait for the print job to finish writing `dest` (existence + stable size),
+/// then reveal it in Finder and close the export window.
+fn reveal_when_written(dest: PathBuf, win: tauri::WebviewWindow) {
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        let mut last_size = None;
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(300));
+            match std::fs::metadata(&dest) {
+                Ok(meta) if Some(meta.len()) == last_size && meta.len() > 0 => {
+                    let _ = Command::new("open").arg("-R").arg(&dest).spawn();
+                    let _ = win.close();
+                    return;
+                }
+                Ok(meta) => last_size = Some(meta.len()),
+                Err(_) => {}
+            }
+        }
+        eprintln!("[popup] print job never produced {dest:?}");
+        let _ = win.close();
+    });
+}
+
+/// A popup window for a same-origin window.open. Export popups stay hidden
+/// and print themselves to a PDF; regular popups behave like small windows.
+fn spawn_export_popup(
+    handle: &tauri::AppHandle,
+    popup_url: tauri::Url,
+    features: Option<tauri::webview::NewWindowFeatures>,
+    label: String,
+) -> tauri::Result<tauri::WebviewWindow> {
+    let is_export = popup_url.query_pairs().any(|(k, _)| k == "exportNote");
+    let dest = pdf_destination(&popup_url);
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(handle, label, tauri::WebviewUrl::External(popup_url))
+            .visible(!is_export)
+            // Two shims: window.print does not exist in WKWebView (signal
+            // through the title instead), and requestAnimationFrame never
+            // fires in a hidden window — the export page waits on it before
+            // printing, so route it through setTimeout.
+            .initialization_script(
+                "window.print = () => { document.title = '__zn_print__' };\n\
+                 window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 16);",
+            )
+            .on_document_title_changed(move |window, title| {
+                if title != "__zn_print__" {
+                    return;
+                }
+                let dest = dest.clone();
+                let win = window.clone();
+                let _ = window.with_webview(move |pw| {
+                    #[cfg(target_os = "macos")]
+                    {
+                        let wk = unsafe { &*pw.inner().cast::<objc2_web_kit::WKWebView>() };
+                        let ok = silent_print_to_pdf(wk, &dest);
+                        eprintln!("[popup] print job started for {dest:?}: {ok}");
+                        if ok {
+                            reveal_when_written(dest, win);
+                        } else {
+                            let _ = win.close();
+                        }
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    let _ = win.close();
+                });
+            })
+            .title("ZenNotes — Export")
+            .inner_size(900.0, 800.0);
+    if let Some(features) = features {
+        builder = builder.window_features(features);
+    }
+    builder.build()
+}
+
 fn main() {
     let port = stable_ui_port();
     let bind = format!("127.0.0.1:{port}");
@@ -150,11 +287,13 @@ fn main() {
             tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::External(url.clone()))
                 .title("ZenNotes")
                 .inner_size(1280.0, 840.0)
-                // window.open: same-origin popups (the PDF export window)
-                // become real Tauri windows; anything else goes to the system
-                // browser. WKWebView has no window.print, so the popup gets a
-                // shim that signals through the title and Rust runs the
-                // native print operation ("Save as PDF" lives in its dialog).
+                // window.open: same-origin popups become real Tauri windows;
+                // anything else goes to the system browser. The PDF export
+                // popup mirrors the Electron desktop: a HIDDEN window renders
+                // the note, then a panel-less native print operation writes
+                // the paginated PDF to ~/Downloads (WKWebView has no
+                // window.print — an injected shim signals readiness through
+                // the title, exactly when the page would have printed).
                 .on_new_window(move |popup_url, features| {
                     if !popup_url.as_str().starts_with(&origin) {
                         let _ = Command::new("open").arg(popup_url.as_str()).spawn();
@@ -164,24 +303,7 @@ fn main() {
                         "popup-{}",
                         popup_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                     );
-                    let built = tauri::WebviewWindowBuilder::new(
-                        &handle,
-                        label,
-                        tauri::WebviewUrl::External(popup_url),
-                    )
-                    .window_features(features)
-                    .initialization_script(
-                        "window.print = () => { document.title = '__zn_print__' };",
-                    )
-                    .on_document_title_changed(|window, title| {
-                        if title == "__zn_print__" {
-                            let _ = window.print();
-                        }
-                    })
-                    .title("ZenNotes — Export")
-                    .inner_size(900.0, 800.0)
-                    .build();
-                    match built {
+                    match spawn_export_popup(&handle, popup_url, Some(features), label) {
                         Ok(window) => tauri::webview::NewWindowResponse::Create { window },
                         Err(err) => {
                             eprintln!("popup window failed: {err}");
@@ -190,6 +312,14 @@ fn main() {
                     }
                 })
                 .build()?;
+
+            // Test hook: render + silently print one note on launch, no UI
+            // driving needed. `ZENNOTES_TEST_EXPORT=inbox/Welcome.md`.
+            if let Ok(note) = std::env::var("ZENNOTES_TEST_EXPORT") {
+                let export_url: tauri::Url =
+                    format!("http://{bind}/?exportNote={note}").parse().expect("test url");
+                spawn_export_popup(app.handle(), export_url, None, "test-export".into())?;
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
